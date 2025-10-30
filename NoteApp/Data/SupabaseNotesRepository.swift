@@ -5,60 +5,119 @@
 //  Created by Bryan Meza on 29/10/25.
 //
 
-
 import Foundation
 import Supabase
-import Postgrest
-import Auth
 
-final class SupabaseNotesRepository: NotesRepository {
-
-  func fetchNotes() async throws -> [Note] {
-    // throws if no session
-    _ = try await supabase.auth.session
-
-    return try await supabase
-      .from("notes")
-      .select()
-      .order("created_at", ascending: false)
-      .execute()
-      .value
-  }
-
-  func addNote(title: String, body: String?) async throws -> Note {
-    let session = try await supabase.auth.session
-    let payload = NewNote(user_id: session.user.id, title: title, body: body)
-
-    let inserted: [Note] = try await supabase
-      .from("notes")
-      .insert(payload)
-      .select()
-      .execute()
-      .value
-
-    guard let first = inserted.first else {
-      throw NSError(domain: "Notes", code: -1, userInfo: [NSLocalizedDescriptionKey: "Insert returned empty"])
+/**
+ * SupabaseNotesRepository - Handles all database operations for notes
+ */
+class SupabaseNotesRepository {
+    private let client: SupabaseClient
+    private let decoder: JSONDecoder
+    
+    init(client: SupabaseClient = SupabaseClientManager.shared.client) {
+        self.client = client
+        
+        // Configure JSON decoder for date handling
+        self.decoder = JSONDecoder()
+        self.decoder.dateDecodingStrategy = .iso8601
     }
-    return first
-  }
-
-  func updateNote(_ note: Note, title: String, body: String?) async throws -> Note {
-    let payload = UpdateNote(title: title, body: body)
-    let updated: [Note] = try await supabase
-      .from("notes")
-      .update(payload)
-      .eq("id", note.id.uuidString)
-      .select()
-      .execute()
-      .value
-    return updated.first ?? note
-  }
-
-  func deleteNote(_ note: Note) async throws {
-    _ = try await supabase
-      .from("notes")
-      .delete()
-      .eq("id", note.id.uuidString)
-      .execute()
-  }
+    
+    /**
+     * Fetch all notes for the current user
+     */
+    func fetchNotes() async throws -> [Note] {
+        let response = try await client
+            .from("notes")
+            .select()
+            .order("created_at", ascending: false)
+            .execute()
+        
+        let notes: [Note] = try decoder.decode(
+            [Note].self,
+            from: response.data
+        )
+        
+        return notes
+    }
+    
+    /**
+     * Create a new note
+     */
+    func createNote(title: String, body: String) async throws -> Note {
+        let dto = CreateNoteDTO(title: title, body: body)
+        
+        let response = try await client
+            .from("notes")
+            .insert(dto)
+            .select()
+            .single()
+            .execute()
+        
+        // Debug: Print the raw response
+        if let jsonString = String(data: response.data, encoding: .utf8) {
+            print("Response JSON: \(jsonString)")
+        }
+        
+        let note: Note = try decoder.decode(
+            Note.self,
+            from: response.data
+        )
+        
+        return note
+    }
+    
+    /**
+     * Update an existing note
+     */
+    func updateNote(noteId: UUID, title: String, body: String) async throws -> Note {
+        let dto = UpdateNoteDTO(title: title, body: body)
+        
+        let response = try await client
+            .from("notes")
+            .update(dto)
+            .eq("id", value: noteId.uuidString)
+            .select()
+            .single()
+            .execute()
+        
+        let note: Note = try decoder.decode(
+            Note.self,
+            from: response.data
+        )
+        
+        return note
+    }
+    
+    /**
+     * Delete a note
+     */
+    func deleteNote(noteId: UUID) async throws {
+        try await client
+            .from("notes")
+            .delete()
+            .eq("id", value: noteId.uuidString)
+            .execute()
+    }
+    
+    /**
+     * Search notes by title or body
+     */
+    func searchNotes(searchTerm: String) async throws -> [Note] {
+        let pattern = "%\(searchTerm)%"
+        
+        let response = try await client
+            .from("notes")
+            .select()
+            .or("title.ilike.\(pattern),body.ilike.\(pattern)")
+            .order("created_at", ascending: false)
+            .execute()
+        
+        let notes: [Note] = try decoder.decode(
+            [Note].self,
+            from: response.data
+        )
+        
+        return notes
+    }
 }

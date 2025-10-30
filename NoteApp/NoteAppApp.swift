@@ -6,12 +6,18 @@
 //
 
 import SwiftUI
+import Supabase
 
+/**
+ * NoteAppApp - Main entry point for the Notes application
+ * Initializes the app and provides the root view with authentication state
+ */
 @main
 struct NoteAppApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(AuthViewModel())
         }
     }
 }

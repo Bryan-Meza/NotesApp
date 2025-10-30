@@ -7,12 +7,25 @@
 
 import SwiftUI
 
+/**
+ * RootView - Root navigation that switches between auth and main app
+ */
 struct RootView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
+    
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        Group {
+            if authViewModel.session != nil {
+                NotesListView()
+            } else {
+                AuthView()
+            }
+        }
+        .environmentObject(authViewModel)
     }
 }
 
 #Preview {
     RootView()
+        .environmentObject(AuthViewModel())
 }
