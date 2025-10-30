@@ -60,3 +60,9 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Secrets - API Keys and Sensitive Data
+Config.swift
+Secrets.swift
+*.xcconfig
+!Config.example.swift
