@@ -8,7 +8,7 @@
 import Foundation
 import Supabase
 import SwiftUI
-import Combine  // Add this import
+import Combine
 
 /**
  * AuthViewModel - Manages authentication state and operations

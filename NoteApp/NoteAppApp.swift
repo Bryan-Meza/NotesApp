@@ -6,18 +6,26 @@
 //
 
 import SwiftUI
-import Supabase
+import SwiftData
 
-/**
- * NoteAppApp - Main entry point for the Notes application
- * Initializes the app and provides the root view with authentication state
- */
 @main
 struct NoteAppApp: App {
+    // SwiftData container
+    let modelContainer: ModelContainer
+    
+    init() {
+        do {
+            modelContainer = try ModelContainer(for: LocalNote.self)
+        } catch {
+            fatalError("Failed to initialize ModelContainer: \(error)")
+        }
+    }
+    
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(AuthViewModel())
+                .modelContainer(modelContainer)
         }
     }
 }

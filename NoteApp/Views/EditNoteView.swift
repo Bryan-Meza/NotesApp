@@ -6,40 +6,37 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /**
- * EditNoteView - Create or edit a note
- * Uses 'noteBody' to avoid conflict with SwiftUI's 'body' property
+ * EditNoteView - Create or edit a note (Updated for offline-first)
  */
 struct EditNoteView: View {
     @ObservedObject var notesViewModel: NotesViewModel
-    var note: Note?
+    var note: LocalNote?  // Changed from Note to LocalNote
     
     @State private var title: String
-    @State private var noteBody: String  // Renamed to avoid conflict with View's body
+    @State private var noteBody: String
     @State private var isSaving = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var isPresentedAsSheet: Bool
     
     @Environment(\.dismiss) private var dismiss
     
     // For sheet presentation
-    init(notesViewModel: NotesViewModel, note: Note? = nil, isPresented: Binding<Bool>) {
+    init(notesViewModel: NotesViewModel, note: LocalNote? = nil, isPresented: Binding<Bool>) {
         self.notesViewModel = notesViewModel
         self.note = note
         self._title = State(initialValue: note?.title ?? "")
         self._noteBody = State(initialValue: note?.body ?? "")
-        self._isPresentedAsSheet = State(initialValue: true)
     }
     
     // For NavigationLink presentation
-    init(notesViewModel: NotesViewModel, note: Note? = nil) {
+    init(notesViewModel: NotesViewModel, note: LocalNote? = nil) {
         self.notesViewModel = notesViewModel
         self.note = note
         self._title = State(initialValue: note?.title ?? "")
         self._noteBody = State(initialValue: note?.body ?? "")
-        self._isPresentedAsSheet = State(initialValue: false)
     }
     
     var body: some View {
@@ -117,16 +114,9 @@ struct EditNoteView: View {
         let success: Bool
         
         if let note = note {
-            success = await notesViewModel.updateNote(
-                noteId: note.id,
-                title: title,
-                body: noteBody
-            )
+            success = await notesViewModel.updateNote(note: note, title: title, body: noteBody)
         } else {
-            success = await notesViewModel.createNote(
-                title: title,
-                body: noteBody
-            )
+            success = await notesViewModel.createNote(title: title, body: noteBody)
         }
         
         isSaving = false
@@ -141,8 +131,12 @@ struct EditNoteView: View {
 }
 
 #Preview("Create Note") {
-    EditNoteView(
-        notesViewModel: NotesViewModel(),
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try! ModelContainer(for: LocalNote.self, configurations: config)
+    let authViewModel = AuthViewModel()
+    
+    return EditNoteView(
+        notesViewModel: NotesViewModel(modelContext: container.mainContext, authViewModel: authViewModel),
         isPresented: .constant(true)
     )
 }

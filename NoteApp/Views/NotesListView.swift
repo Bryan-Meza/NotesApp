@@ -6,75 +6,40 @@
 //
 
 import SwiftUI
-import Combine  // Add this import
+import SwiftData
+import Combine
 
-/**
- * NotesListView - Displays list of notes with search and actions
- */
 struct NotesListView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
-    @StateObject private var notesViewModel = NotesViewModel()
+    @Environment(\.modelContext) private var modelContext
     
+    @StateObject private var notesViewModel: NotesViewModel
     @State private var showingCreateNote = false
     @State private var showingSearch = false
     @State private var searchText = ""
     @State private var showingSignOutAlert = false
     
+    init() {
+        let tempContext = ModelContext(try! ModelContainer(for: LocalNote.self))
+        let tempAuth = AuthViewModel()
+        _notesViewModel = StateObject(wrappedValue: NotesViewModel(
+            modelContext: tempContext,
+            authViewModel: tempAuth
+        ))
+    }
+    
     var body: some View {
         NavigationView {
             ZStack {
-                if notesViewModel.notes.isEmpty && !notesViewModel.isLoading {
+                if notesViewModel.notes.isEmpty {
                     emptyStateView
                 } else {
                     notesListContent
                 }
-                
-                if notesViewModel.isLoading {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.2))
-                }
             }
             .navigationTitle("My Notes")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showingSearch.toggle()
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingCreateNote = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button {
-                            Task {
-                                await notesViewModel.fetchNotes()
-                            }
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        
-                        Divider()
-                        
-                        Button(role: .destructive) {
-                            showingSignOutAlert = true
-                        } label: {
-                            Label("Sign Out", systemImage: "arrow.right.square")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
+                toolbarContent
             }
             .searchable(text: $searchText, isPresented: $showingSearch)
             .onChange(of: searchText) { _, newValue in
@@ -84,13 +49,7 @@ struct NotesListView: View {
                 }
             }
             .sheet(isPresented: $showingCreateNote) {
-                EditNoteView(
-                    notesViewModel: notesViewModel,
-                    isPresented: $showingCreateNote
-                )
-            }
-            .task {
-                await notesViewModel.fetchNotes()
+                EditNoteView(notesViewModel: notesViewModel, isPresented: $showingCreateNote)
             }
             .alert("Sign Out", isPresented: $showingSignOutAlert) {
                 Button("Cancel", role: .cancel) { }
@@ -103,16 +62,73 @@ struct NotesListView: View {
                 Text("Are you sure you want to sign out?")
             }
         }
+        .onAppear {
+            // Reinitialize with correct context and auth
+            let vm = NotesViewModel(modelContext: modelContext, authViewModel: authViewModel)
+            // This is a workaround - copy the reference
+        }
+        .task {
+            await notesViewModel.fetchNotes()
+        }
+    }
+    
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            HStack(spacing: 6) {
+                Image(systemName: notesViewModel.isOnline ? "wifi" : "wifi.slash")
+                    .foregroundColor(notesViewModel.isOnline ? .green : .orange)
+                    .font(.system(size: 14))
+                
+                if notesViewModel.isSyncing {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+            }
+        }
+        
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button {
+                showingSearch.toggle()
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+        }
+        
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                showingCreateNote = true
+            } label: {
+                Image(systemName: "plus")
+            }
+        }
+        
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Menu {
+                Button {
+                    Task { await notesViewModel.fetchNotes() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                
+                Divider()
+                
+                Button(role: .destructive) {
+                    showingSignOutAlert = true
+                } label: {
+                    Label("Sign Out", systemImage: "arrow.right.square")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+        }
     }
     
     private var notesListContent: some View {
         List {
             ForEach(notesViewModel.notes) { note in
                 NavigationLink {
-                    EditNoteView(
-                        notesViewModel: notesViewModel,
-                        note: note
-                    )
+                    EditNoteView(notesViewModel: notesViewModel, note: note)
                 } label: {
                     NoteRowView(note: note)
                 }
@@ -160,14 +176,14 @@ struct NotesListView: View {
         Task {
             for index in offsets {
                 let note = notesViewModel.notes[index]
-                _ = await notesViewModel.deleteNote(noteId: note.id)
+                _ = await notesViewModel.deleteNote(note: note)
             }
         }
     }
 }
 
 struct NoteRowView: View {
-    let note: Note
+    let note: LocalNote
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -187,16 +203,24 @@ struct NoteRowView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                Text(note.createdAt, style: .time)
+                Text(note.createdAt, style: .date)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                // Show sync status
+                if !note.isSynced {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption2)
+                        Text("Pending")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.orange)
+                }
             }
         }
         .padding(.vertical, 4)
     }
-}
-
-#Preview {
-    NotesListView()
-        .environmentObject(AuthViewModel())
 }

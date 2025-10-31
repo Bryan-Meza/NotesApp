@@ -7,126 +7,115 @@
 
 import Foundation
 import SwiftUI
-import Combine  // Add this import
+import SwiftData
+import Combine
+import Supabase
 
-/**
- * NotesViewModel - Manages notes data and business logic
- */
 @MainActor
 class NotesViewModel: ObservableObject {
-    @Published var notes: [Note] = []
+    @Published var notes: [LocalNote] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var searchTerm: String = ""
+    @Published var isOnline = false
+    @Published var isSyncing = false
     
-    private let repository: SupabaseNotesRepository
+    private let offlineRepository: OfflineNotesRepository
+    private let authViewModel: AuthViewModel
+    private var cancellables = Set<AnyCancellable>()
     
-    init(repository: SupabaseNotesRepository = SupabaseNotesRepository()) {
-        self.repository = repository
+    init(modelContext: ModelContext, authViewModel: AuthViewModel) {
+        self.offlineRepository = OfflineNotesRepository(modelContext: modelContext)
+        self.authViewModel = authViewModel
+        self.notes = offlineRepository.notes
+        self.isOnline = offlineRepository.isOnline
+        self.isSyncing = offlineRepository.isSyncing
+        
+        // Subscribe to repository changes
+        offlineRepository.$notes
+            .sink { [weak self] newNotes in
+                self?.notes = newNotes
+            }
+            .store(in: &cancellables)
+        
+        // Monitor connection status
+        Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.isOnline = self?.offlineRepository.isOnline ?? false
+                self?.isSyncing = self?.offlineRepository.isSyncing ?? false
+            }
+            .store(in: &cancellables)
     }
     
     func fetchNotes() async {
-        isLoading = true
-        errorMessage = nil
+        print("🔄 Fetching notes...")
         
-        do {
-            notes = try await repository.fetchNotes()
-        } catch {
-            errorMessage = "Failed to load notes: \(error.localizedDescription)"
-            print("Error fetching notes: \(error)")
-        }
+        // Load local notes immediately
+        offlineRepository.fetchLocalNotes()
+        notes = offlineRepository.notes
         
-        isLoading = false
+        // Sync with server in background
+        await offlineRepository.manualSync()
+        
+        // Refresh after sync
+        offlineRepository.fetchLocalNotes()
+        notes = offlineRepository.notes
+        
+        print("✅ Fetch complete - \(notes.count) notes")
     }
     
     func createNote(title: String, body: String) async -> Bool {
-        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard !title.isEmpty else {
             errorMessage = "Title cannot be empty"
             return false
         }
         
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            let newNote = try await repository.createNote(title: title, body: body)
-            notes.insert(newNote, at: 0)
-            isLoading = false
-            return true
-        } catch {
-            errorMessage = "Failed to create note: \(error.localizedDescription)"
-            print("Error creating note: \(error)")
-            isLoading = false
+        guard let userId = authViewModel.currentUser?.id.uuidString else {
+            errorMessage = "Not authenticated"
             return false
         }
+        
+        print("➕ Creating note: \(title)")
+        offlineRepository.createNote(userId: userId, title: title, body: body)
+        
+        // Force immediate update
+        notes = offlineRepository.notes
+        print("✅ Note created - now have \(notes.count) notes")
+        
+        return true
     }
     
-    func updateNote(noteId: UUID, title: String, body: String) async -> Bool {
-        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else {
-            errorMessage = "Title cannot be empty"
-            return false
-        }
+    func updateNote(note: LocalNote, title: String, body: String) async -> Bool {
+        guard !title.isEmpty else { return false }
         
-        isLoading = true
-        errorMessage = nil
+        print("✏️ Updating note: \(title)")
+        offlineRepository.updateNote(note: note, title: title, body: body)
         
-        do {
-            let updatedNote = try await repository.updateNote(
-                noteId: noteId,
-                title: title,
-                body: body
-            )
-            
-            if let index = notes.firstIndex(where: { $0.id == noteId }) {
-                notes[index] = updatedNote
-            }
-            
-            isLoading = false
-            return true
-        } catch {
-            errorMessage = "Failed to update note: \(error.localizedDescription)"
-            print("Error updating note: \(error)")
-            isLoading = false
-            return false
-        }
+        // Force immediate update
+        notes = offlineRepository.notes
+        print("✅ Note updated")
+        
+        return true
     }
     
-    func deleteNote(noteId: UUID) async -> Bool {
-        isLoading = true
-        errorMessage = nil
+    func deleteNote(note: LocalNote) async -> Bool {
+        print("🗑️ Deleting note: \(note.title)")
+        offlineRepository.deleteNote(note: note)
         
-        do {
-            try await repository.deleteNote(noteId: noteId)
-            notes.removeAll { $0.id == noteId }
-            isLoading = false
-            return true
-        } catch {
-            errorMessage = "Failed to delete note: \(error.localizedDescription)"
-            print("Error deleting note: \(error)")
-            isLoading = false
-            return false
-        }
+        // Force immediate update
+        notes = offlineRepository.notes
+        print("✅ Note deleted - now have \(notes.count) notes")
+        
+        return true
     }
     
     func searchNotes(term: String) async {
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            if term.trimmingCharacters(in: .whitespaces).isEmpty {
-                notes = try await repository.fetchNotes()
-            } else {
-                notes = try await repository.searchNotes(searchTerm: term)
-            }
-        } catch {
-            errorMessage = "Search failed: \(error.localizedDescription)"
-            print("Error searching notes: \(error)")
-        }
-        
-        isLoading = false
+        offlineRepository.searchNotes(term: term)
+        notes = offlineRepository.notes
     }
     
-    func clearError() {
-        errorMessage = nil
+    func clearAllData() {
+        offlineRepository.clearAllLocalData()
+        notes = offlineRepository.notes
     }
 }
